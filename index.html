@@ -84,7 +84,7 @@
       .hud-tl{ top:18px; left:18px; }
       .hud-tr,.hud-br,.consts,.corner{ display:none; }
       .hud-bl{ bottom:18px; left:18px; }
-      .hud-bc{ bottom:20px; }
+      .hud-bc{ bottom:20px; font-size:8px; letter-spacing:.2em; }
     }
   </style>
   <script type="importmap">
@@ -124,7 +124,7 @@
   </div>
 
   <div class="hud hud-br" id="hudRes">—</div>
-  <div class="hud hud-bc" id="hint">DRAG — ORBIT&nbsp;&nbsp;·&nbsp;&nbsp;SCROLL / PINCH — APPROACH</div>
+  <div class="hud hud-bc" id="hint">DRAG — ORBIT&nbsp;&nbsp;·&nbsp;&nbsp;SCROLL / PINCH — APPROACH&nbsp;&nbsp;·&nbsp;&nbsp;CLICK TO ENABLE SOUND</div>
 
   <div id="loader" aria-hidden="true">
     <div class="l-txt">INTEGRATING NULL GEODESICS</div>
@@ -134,6 +134,74 @@
   <div id="fallback" hidden>
     <div>WEBGL UNAVAILABLE<br>THIS INSTRUMENT REQUIRES GPU ACCELERATION</div>
   </div>
+
+  <!-- Background music: YouTube embed (hidden). Autoplay is muted until first user gesture. -->
+  <div id="yt-audio" style="position:fixed;width:1px;height:1px;overflow:hidden;left:-9999px;top:-9999px;pointer-events:none;">
+    <iframe
+      id="ytFrame"
+      src="https://www.youtube.com/embed/e5YhGbVH8B4?enablejsapi=1&loop=1&playlist=e5YhGbVH8B4&controls=0&autoplay=1&mute=1&playsinline=1&modestbranding=1&rel=0"
+      allow="autoplay; encrypted-media"
+      title="background music">
+    </iframe>
+  </div>
+
+  <!-- YouTube IFrame API -->
+  <script>
+    // ============================================================
+    //  Background music controller
+    // ============================================================
+    window._ytPlayer = null;
+    window._ytMuted  = true;
+
+    function onYouTubeIframeAPIReady() {
+      window._ytPlayer = new YT.Player('ytFrame', {
+        events: {
+          onReady: (e) => {
+            e.target.setVolume(0);
+            e.target.mute();
+            e.target.playVideo();
+          },
+          onStateChange: (e) => {
+            // If the video ends (in case loop fails), restart it
+            if (e.data === YT.PlayerState.ENDED) {
+              e.target.seekTo(0);
+              e.target.playVideo();
+            }
+          }
+        }
+      });
+    }
+
+    // Fade music up once the loader disappears
+    window._fadeMusicIn = function () {
+      if (!window._ytPlayer || !window._ytPlayer.unMute) return;
+      const p = window._ytPlayer;
+      p.unMute();
+      let v = 0;
+      const target = 38;
+      const tick = () => {
+        v = Math.min(target, v + 2);
+        try { p.setVolume(v); } catch (_) {}
+        if (v < target) setTimeout(tick, 180);
+      };
+      tick();
+    };
+
+    // First user gesture anywhere unlocks sound
+    function _unlockAudio() {
+      if (window._ytMuted) {
+        window._ytMuted = false;
+        window._fadeMusicIn();
+      }
+      window.removeEventListener('pointerdown', _unlockAudio);
+      window.removeEventListener('keydown',     _unlockAudio);
+      window.removeEventListener('touchstart',  _unlockAudio);
+    }
+    window.addEventListener('pointerdown', _unlockAudio, { once: true });
+    window.addEventListener('keydown',     _unlockAudio, { once: true });
+    window.addEventListener('touchstart',  _unlockAudio, { once: true, passive: true });
+  </script>
+  <script src="https://www.youtube.com/iframe_api"></script>
 
   <script type="module">
     import * as THREE from 'three';
@@ -148,7 +216,7 @@
     const CONFIG = {
       fov: 58,
       theta0: 0.9,
-      phi0: 0.18,                      // camera slightly above equator
+      phi0: 0.18,
       radius0: 23,
       radiusHome: 17,
       minR: 4.5,
@@ -157,7 +225,7 @@
       autoSpeed: 0.032,
       pixelCap: 1.5,
       bloom: { strength: 0.9, radius: 0.55, threshold: 0.72 },
-      tilt: 30 * Math.PI / 180,        // ← BLACK HOLE / DISK TILT = 30°
+      tilt: 30 * Math.PI / 180,
     };
     const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -182,7 +250,7 @@
       uniform vec3  uCamUp;
       uniform float uTanHalfFov;
       uniform float uEscape;
-      uniform float uTilt;                 // ← black hole tilt (radians)
+      uniform float uTilt;
 
       const float RS       = 1.0;
       const float DISK_IN  = 2.8;
@@ -318,7 +386,6 @@
       }
 
       vec3 traceRay(vec3 ro, vec3 rd, out bool captured){
-        /* ---- TILT THE BLACK HOLE (disk) BY uTilt ABOUT X ---- */
         float ct = cos(uTilt), st = sin(uTilt);
         mat3 tilt = mat3(
           1.0, 0.0, 0.0,
@@ -447,7 +514,7 @@
       uCamUp:      { value: new THREE.Vector3() },
       uTanHalfFov: { value: Math.tan(THREE.MathUtils.degToRad(CONFIG.fov) / 2) },
       uEscape:     { value: 30 },
-      uTilt:       { value: CONFIG.tilt },     // ← 30° tilt uniform
+      uTilt:       { value: CONFIG.tilt },
     };
 
     const scene = new THREE.Scene();
@@ -673,6 +740,10 @@
         const l = $('loader');
         l.classList.add('done');
         setTimeout(() => l.remove(), 1200);
+        // Fade music in when the loader disappears
+        if (window._fadeMusicIn && !window._ytMuted) {
+          window._fadeMusicIn();
+        }
       }, 700);
     }
 
@@ -690,9 +761,6 @@
 
       updateRig(dt);
       updateCamera();
-
-      // Black hole tilt is fixed at 30° — you can animate it here if desired:
-      // uniforms.uTilt.value = CONFIG.tilt + Math.sin(simT * 0.2) * 0.1;
 
       uniforms.uTime.value = simT;
       gradePass.uniforms.uTime.value = simT;
